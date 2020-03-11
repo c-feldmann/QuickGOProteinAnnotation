@@ -128,20 +128,24 @@ class GOMolecularFunctionHierarchy:
     """Class to manage hierarchically relations of GOMolecularFunctions.
 
      GOMolecularFunctions are arranged hierarchically and for a protein with a specific function, all supercategorys of
-     this function
+     this function are present in the protein. E.g. A protein kinase is always a kinase, a transferase,
+     and always an enzyme. To manage these dependencies a directed graphs is utilised.
 
     """
 
     def __init__(self):
         self._function_dict: Dict[str, GoMolecularFunction] = dict()
-        self._forward_graph = nx.DiGraph()
-        self._backward_graph = nx.DiGraph()
+        self._graph = nx.DiGraph()
+
+    @property
+    def graph(self):
+        return self._graph
 
     def get_parent(self, go_id) -> List[GoMolecularFunction]:
-        return [self._function_dict[node] for node in self._forward_graph.neighbors(go_id)]
+        return [self._function_dict[node] for node in self._graph.neighbors(go_id)]
 
     def get_children(self, go_id) -> List[GoMolecularFunction]:
-        return [self._function_dict[node] for node in self._backward_graph.neighbors(go_id)]
+        return [self._function_dict[node] for node in self._graph.reverse().neighbors(go_id)]
 
     @staticmethod
     def _go_path(start_go_id, end_go_id):
@@ -178,8 +182,7 @@ class GOMolecularFunctionHierarchy:
                 if edge['relationship'] != 'is_a':
                     raise AssertionError("Unexpected relation: {}".format(edge['relationship']))
 
-                self._forward_graph.add_edge(child, parent)
-                self._backward_graph.add_edge(parent, child)
+                self._graph.add_edge(child, parent)
 
     def _add_go_function(self, go_id):
         go_function = GoMolecularFunction(go_id)
@@ -195,10 +198,10 @@ class GOMolecularFunctionHierarchy:
     def get_go_function(self, go_id) -> GoMolecularFunction:
         return self._function_dict[go_id]
 
-    def get_nodes_upwards(self, go_id) -> Set[GOTerm]:
-        r_nodes: Set[GOTerm] = set()
+    def get_nodes_upwards(self, go_id) -> Set[GoMolecularFunction]:
+        r_nodes: Set[GoMolecularFunction] = set()
         processed_ids = set()
-        iter_nodes: List[GOTerm] = [self.get_go_function(go_id)]
+        iter_nodes: List[GoMolecularFunction] = [self.get_go_function(go_id)]
         while iter_nodes:
             node = iter_nodes.pop()
             r_nodes.add(node)
@@ -209,10 +212,10 @@ class GOMolecularFunctionHierarchy:
                 iter_nodes.append(parent)
         return r_nodes
 
-    def get_nodes_downwards(self, go_id) -> Set[GOTerm]:
-        r_nodes: Set[GOTerm] = set()
+    def get_nodes_downwards(self, go_id) -> Set[GoMolecularFunction]:
+        r_nodes: Set[GoMolecularFunction] = set()
         processed_ids = set()
-        iter_nodes: List[GOTerm] = [self.get_go_function(go_id)]
+        iter_nodes: List[GoMolecularFunction] = [self.get_go_function(go_id)]
         while iter_nodes:
             node = iter_nodes.pop()
             r_nodes.add(node)
@@ -227,55 +230,21 @@ class GOMolecularFunctionHierarchy:
 class Protein:
     def __init__(self, uniprot_id: str):
         self._uniprot_id = uniprot_id
-        self._functions = dict()
+        self._function_id_set = set(self._extract_query(uniprot_id))
 
     @property
     def uniprot_id(self):
         return self._uniprot_id
 
     @property
-    def functions(self):
-        return self._functions
+    def functions(self) -> Set[str]:
+        return self._function_id_set
 
     @functions.setter
     def functions(self, function_dict):
-        if not isinstance(function_dict, dict):
+        if not isinstance(function_dict, set):
             raise TypeError
-        self._functions = function_dict
-
-
-class ProteinManager:
-    def __init__(self):
-        self._hierarchy = GOMolecularFunctionHierarchy()
-        self._created_proteins: Dict[str, Protein] = dict()
-        self._managed_classes_dict: Dict[str, Dict[str, Set[str]]] = dict()
-        self._protein_class_dict = dict()
-        self._updated = False
-
-    def add_protein(self, uniprot_id):
-        protein = self.create_protein(uniprot_id)
-        self._created_proteins[uniprot_id] = protein
-        self._updated = False
-
-    def create_protein(self, uniprot_id) -> Protein:
-        protein = Protein(uniprot_id)
-        protein_function_ids = list(self._extract_query(uniprot_id))
-        for pfi in protein_function_ids:
-            self._hierarchy.add_go_function(pfi)
-        updated_protein_function_ids = [self._hierarchy.get_go_function(go_id).go_id for go_id in protein_function_ids]
-
-        r_ids = set()
-        while updated_protein_function_ids:
-            iter_id = updated_protein_function_ids.pop()
-            if iter_id in r_ids:
-                continue
-            r_ids.add(iter_id)
-            upward_nodes = [node.go_id for node in self._hierarchy.get_nodes_upwards(iter_id)]
-            r_ids.update(upward_nodes)
-
-        function_dict = dict(zip(r_ids, [self._hierarchy.get_go_function(node).name for node in r_ids]))
-        protein.functions = function_dict
-        return protein
+        self._function_id_set = function_dict
 
     def _query_go_for_function(self, uniprot_id, page=1) -> list:
         data = json_query(f"https://www.ebi.ac.uk/QuickGO/services/annotation/search?selectedFields=geneProductId&"
@@ -307,6 +276,37 @@ class ProteinManager:
                 if entry["qualifier"] == "enables":
                     yield entry["goId"]
 
+
+class ProteinManager:
+    def __init__(self):
+        self._hierarchy = GOMolecularFunctionHierarchy()
+        self._created_proteins: Dict[str, Protein] = dict()
+        self._managed_classes_dict: Dict[str, Dict[str, Set[str]]] = dict()
+        self._protein_class_dict = dict()
+        self._updated = False
+
+    def _create_protein(self, uniprot_id) -> Protein:
+        protein = Protein(uniprot_id)
+        for prot_mol_func_id in protein.functions:
+            self._hierarchy.add_go_function(prot_mol_func_id)
+        updated_protein_function_ids = [x for x in protein.functions]
+
+        r_ids = set()
+        while updated_protein_function_ids:
+            iter_id = updated_protein_function_ids.pop()
+            if iter_id in r_ids:
+                continue
+            r_ids.add(iter_id)
+            upward_nodes = [node.go_id for node in self._hierarchy.get_nodes_upwards(iter_id)]
+            r_ids.update(upward_nodes)
+
+        protein.functions = r_ids
+        return protein
+
+    def add_protein(self, uniprot_id) -> None:
+        protein = self._create_protein(uniprot_id)
+        self._created_proteins[uniprot_id] = protein
+
     def get_go_function(self, go_id) -> GoMolecularFunction:
         return self._hierarchy.get_go_function(go_id)
 
@@ -315,7 +315,9 @@ class ProteinManager:
                              present_functions: Set[str],
                              not_present_functions: Set[str],
                              check_definition_clash: bool = True):
-        """Adds a protein_class by
+        """Adds a protein_class for classification.
+
+        TODO: Add explanation
 
         Args:
             check_definition_clash (bool):
@@ -333,7 +335,8 @@ class ProteinManager:
         if check_definition_clash:
             new_definion_covered_go_terms = set()
             for go_id in present_functions:
-                new_definion_covered_go_terms.update([node.go_id for node in self._hierarchy.get_nodes_downwards(go_id)])
+                new_definion_covered_go_terms.update([node.go_id for node in
+                                                      self._hierarchy.get_nodes_downwards(go_id)])
             for go_id in not_present_functions:
                 new_definion_covered_go_terms.difference_update([node.go_id for node in
                                                                  self._hierarchy.get_nodes_upwards(go_id)])
@@ -352,34 +355,28 @@ class ProteinManager:
         self._managed_classes_dict[name] = {"contains": present_functions,
                                             "contains_not": not_present_functions}
 
-    def assign_classes(self, avoid_duplicates=True):
-        self._protein_class_dict = dict()
-        prot_class_dict = dict()
-        for prot_class, definition_dict in self._managed_classes_dict.items():
-            prot_class_dict[prot_class] = set()
-            contains = definition_dict["contains"]
-            contains_not = definition_dict["contains_not"]
-            for uniprot_id, protein in self._created_proteins.items():
-                if contains.issubset(protein.functions.keys()):
-                    if len(contains_not.intersection(protein.functions.keys())) == 0:
-                        prot_class_dict[prot_class].add(uniprot_id)
-
-        if avoid_duplicates:
-            already_classified_proteins = set()
-            muliple_classes = set()
-            for prot_class, proteins in prot_class_dict.items():
-                muliple_classes.update(already_classified_proteins.intersection(proteins))
-                already_classified_proteins.update(proteins)
-
-            for prot_class, proteins in prot_class_dict.items():
-                self._protein_class_dict[prot_class] = proteins - muliple_classes
-            self._protein_class_dict["Multiclass"] = muliple_classes
-            self._updated = True
+    def _is_match(self, uniprot_id, class_name):
+        must_occure = self._managed_classes_dict[class_name]["contains"]
+        must_not_occure = self._managed_classes_dict[class_name]["contains_not"]
+        protein_functions = set(self._created_proteins[uniprot_id].functions)
+        if must_occure.issubset(protein_functions) and len(must_not_occure.intersection(protein_functions)) == 0:
+            return True
         else:
-            for prot_class, proteins in prot_class_dict.items():
-                self._protein_class_dict[prot_class] = proteins
+            return False
 
-    def get_classification(self) -> Dict[str, str]:
-        if not self._updated:
-            self.assign_classes()
-        return self._protein_class_dict
+    def _classify_protein(self, uniprot_id):
+        matching_classes = set()
+        for protein_class in self._managed_classes_dict.keys():
+            if self._is_match(uniprot_id, protein_class):
+                matching_classes.add(protein_class)
+        return matching_classes
+
+    def get_protein_class(self, uniprot_id) -> str:
+        if uniprot_id not in self._created_proteins:
+            self.add_protein(uniprot_id)
+        matching_classes = self._classify_protein(uniprot_id)
+        if len(matching_classes) == 1:
+            return list(matching_classes)[0]
+        else:
+            return "Multiclass_({})".format(", ".join(sorted(matching_classes)))
+
