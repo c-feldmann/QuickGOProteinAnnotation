@@ -1,1 +1,1 @@
-from GeneOntologyAnnotation.ProteinClassification.default_use import PreconfiguredProteinClasses
+

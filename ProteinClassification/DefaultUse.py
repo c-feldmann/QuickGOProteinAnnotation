@@ -1,8 +1,14 @@
-from GeneOntologyAnnotation import ProteinManager
+from .GOAnotation import ProteinFactory
 
 
-class PreconfiguredProteinClasses(ProteinManager):
+class PreconfiguredProteinClasses(ProteinFactory):
     def __init__(self):
+        """A predefined classification scheme.
+
+        Attention: transmembrane receptor protein kinases are ill defined and always listed as "Multiclass" since
+        they are receptors and transferases...
+
+        """
         super().__init__()
 
         # Define default classes:
@@ -30,15 +36,33 @@ class PreconfiguredProteinClasses(ProteinManager):
 
         self.define_protein_class("Oxidoreductase", {"GO:0016491"}, set())
 
-        self.define_protein_class("Signaling receptor", {"GO:0038023"}, set())
+        # Singaling recptor without  transmembrane signaling receptor  (GO:0004888)
+        self.define_protein_class("Signaling receptor (not transmembrane)", {"GO:0038023"}, {"GO:0004888"})
+
+        # Transmembrane signaling receptors:
+        # GPCR
+        self.define_protein_class("G protein-coupled receptor", {"GO:0004930"}, set())
+
+        # Transmembrane receptor protein kinase
+        self.define_protein_class("Transmembrane receptor protein kinase", {"GO:0019199"}, set())
+
+        # Other Transmembrane signaling receptors
+        self.define_protein_class("Transmembrane signaling receptors (other)", {"GO:0004888"},
+                                  {"GO:0019199", "GO:0004930"})
 
         self.define_protein_class("Transcription regulator", {"GO:0140110"}, set())
+
+        self.define_protein_class("Serotonin binding", {"GO:0051378"}, set())
+        self.define_protein_class("Dopamine binding", {"GO:0035240"}, set())
+        self.define_protein_class("Acetylcholine binding", {"GO:0042166"}, set())
+        self.define_protein_class("Folic acid binding", {"GO:0005542"}, set())
 
         self.define_protein_class("Transferase (acyl groups)", {"GO:0016746"}, set())
         self.define_protein_class("Transferase (alkyl or aryl groups, no methyl)", {"GO:0016765"}, set())
         self.define_protein_class("Transferase (glycosyl groups)", {"GO:0016757"}, set())
         self.define_protein_class("Transferase (one-carbon groups)", {"GO:0016741"}, set())
-        self.define_protein_class("Transferase (phosphorus-containing groups)", {"GO:0016772"}, set())
+        self.define_protein_class("Transferase (phosphorus-containing groups)", {"GO:0016772"}, set(),
+                                  check_definition_clash=False)
         self.define_protein_class("Transferase (other)",
                                   {"GO:0016740"},
                                   {"GO:0016746", "GO:0016765", "GO:0016757", "GO:0016741", "GO:0016772"})
