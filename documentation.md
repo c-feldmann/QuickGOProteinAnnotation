@@ -1,5 +1,0 @@
-QuickGO-Annotation to Classification
-============================
-
-
-

@@ -1,6 +1,7 @@
 import json
 import warnings
 from typing import *
+import pandas as pd
 
 import networkx as nx
 import requests
@@ -29,7 +30,7 @@ class GOTerm:
         "kinase activity": "GO:0016301"
         "cellular_component": "GO:0005575"
 
-    Example Useage.
+    Example Usage.
         kinase_activity = GOTerm("GO:0016301")
         print(kinase_activity.name)
             -> "kinase activity"
@@ -103,7 +104,7 @@ class GOTerm:
 class GoMolecularFunction(GOTerm):
     """ "Molecular Functions" are a subset of GOTerms used to describe functions of a protein.
 
-    Wrapperclass for GOTerm to ensure the aspect is "molecular_function"
+    Wrapper-class for GOTerm to ensure the aspect is "molecular_function"
     """
 
     def __init__(self, go_id: str, name: str, definition: str, aspect: str):
@@ -125,7 +126,7 @@ class GoMolecularFunction(GOTerm):
 class GOMolecularFunctionHierarchy:
     """Class to manage hierarchically relations of GOMolecularFunctions.
 
-     GOMolecularFunctions are arranged hierarchically and for a protein with a specific function, all supercategorys of
+     GOMolecularFunctions are arranged hierarchically and for a protein with a specific function, all supercategories of
      this function are present in the protein. E.g. A protein kinase is always a kinase, a transferase,
      and always an enzyme. To manage these dependencies a directed graphs is utilised.
 
@@ -137,7 +138,7 @@ class GOMolecularFunctionHierarchy:
         self._graph = nx.DiGraph()
 
     @property
-    def mangaged_funcition_ids(self) -> Set[str]:
+    def managed_function_ids(self) -> Set[str]:
         assert not set(self._rerouted_function_dict.keys()).intersection(self._function_dict.keys())
         return set(self._rerouted_function_dict.keys()).union(self._function_dict.keys())
 
@@ -175,12 +176,12 @@ class GOMolecularFunctionHierarchy:
 
                 # Child and parents are not added directly because the IDs might have changed. The Database is not
                 # exactly up to date.
-                if edge['child'] not in self.mangaged_funcition_ids:
-                    self._add_go_function_from_id(edge['child'])
+                if edge['child'] not in self.managed_function_ids:
+                    self._add_go_function_without_path(edge['child'])
                 child = self.get_go_function_from_id(edge['child']).go_id
 
-                if edge['parent'] not in self.mangaged_funcition_ids:
-                    self._add_go_function_from_id(edge['parent'])
+                if edge['parent'] not in self.managed_function_ids:
+                    self._add_go_function_without_path(edge['parent'])
                 parent = self.get_go_function_from_id(edge['parent']).go_id
 
                 if edge['relationship'] != 'is_a':
@@ -188,8 +189,8 @@ class GOMolecularFunctionHierarchy:
 
                 self._graph.add_edge(child, parent)
 
-    def _add_go_function_from_id(self, go_id):
-        if go_id not in self.mangaged_funcition_ids:
+    def _add_go_function_without_path(self, go_id):
+        if go_id not in self.managed_function_ids:
             go_function = GoMolecularFunction.from_id(go_id)
             if go_id != go_function.go_id:
                 self._rerouted_function_dict[go_id] = go_function.go_id
@@ -197,8 +198,8 @@ class GOMolecularFunctionHierarchy:
                 self._function_dict[go_function.go_id] = go_function
 
     def add_go_function(self, go_id: str) -> None:
-        if go_id not in self.mangaged_funcition_ids:
-            self._add_go_function_from_id(go_id)
+        if go_id not in self.managed_function_ids:
+            self._add_go_function_without_path(go_id)
             updated_id = self.get_go_function_from_id(go_id).go_id
             self._add_path_to_top_level(updated_id)
 
@@ -258,165 +259,131 @@ class Protein:
         self._function_id_set = function_dict
 
 
-class ProteinFactory:
-    def __init__(self):
-        self._hierarchy = GOMolecularFunctionHierarchy()
-        self._created_proteins: Dict[str, Protein] = dict()
-        self._managed_classes_dict: Dict[str, Dict[str, Set[str]]] = dict()
-        self._protein_class_dict = dict()
-        self._updated = False
+class AllFunctionAnnotation:
+    def __init__(self, alternative_name_dict=None, simplify_name=True):
+        if alternative_name_dict is None:
+            alternative_name_dict = dict()
+        self._alternative_name_dict = alternative_name_dict
+        self._simplify_name = simplify_name
+        self._function_relations = GOMolecularFunctionHierarchy()
 
-    def _create_protein(self, uniprot_id) -> Protein:
-        protein = Protein(uniprot_id)
-        protein_functions = list(self.go_protein_function_annotations(uniprot_id))
+    def annotate_proteins(self, protein_list, as_dataframe=True) -> Union[List[Dict], pd.DataFrame]:
+        result_df = []
+        for uniprot_id in protein_list:
+            result_df.extend(self.get_protein_functions(uniprot_id, as_dataframe=False))
+        if as_dataframe:
+            return pd.DataFrame(result_df)
+        else:
+            return result_df
 
-        r_ids = set()
-        while protein_functions:
-            iter_id = protein_functions.pop()
-            if iter_id in r_ids:
-                continue
-            r_ids.add(iter_id)
-            upward_nodes = [node.go_id for node in self._hierarchy.get_nodes_upwards(iter_id)]
-            r_ids.update(upward_nodes)
+    def get_protein_functions(self, uniprot_id, as_dataframe=True) -> Union[List[Dict], pd.DataFrame]:
+        explicit_ids = self._get_protein_explicit_function_ids(uniprot_id)
+        all_ids: Set[str] = set()
+        for go_id in explicit_ids:
+            all_ids.add(go_id)
+            implicit_go_functions = self._function_relations.get_nodes_upwards(go_id)
+            implicit_go_ids = {go_function.go_id for go_function in implicit_go_functions}
+            all_ids.update(implicit_go_ids)
+        # Remove "molecular_function" annotation
+        all_ids.remove("GO:0003674")
+        function_dict_list = []
+        for go_id in all_ids:
+            if go_id in self._alternative_name_dict:
+                name = self._alternative_name_dict[go_id]
+            elif self._simplify_name:
+                name = self._function_relations.get_go_function_from_id(go_id).name
+                name = name.rstrip(" activity")
+            else:
+                name = self._function_relations.get_go_function_from_id(go_id).name
+            function_dict_list.append({"uniprot_id": uniprot_id,
+                                       "go_id": go_id,
+                                       "name": name})
+        if len(function_dict_list) == 0:
+            function_dict_list.append({"uniprot_id": uniprot_id,
+                                       "function": "no_function"})
+        if as_dataframe:
+            return pd.DataFrame(function_dict_list)
+        else:
+            return function_dict_list
 
-        protein.functions = r_ids
-        return protein
+    def _get_protein_explicit_function_ids(self, uniprot_id: str):
+        query_result = self._raw_function_annotations(uniprot_id)
+        # Validate query
+        for item in query_result:
+            # Assert that query worked and returned proper go functions
+            assert uniprot_id in item["geneProductId"], print(uniprot_id, item)
+            assert item["goAspect"] == "molecular_function"
+            assert item["qualifier"] == "enables"
+        extracted_ids = [item["goId"] for item in query_result]
 
-    def _query_go_for_function(self, uniprot_id, page=1) -> list:
+        # Add go ids and find potential ID updated
+        for go_id in extracted_ids:
+            self._function_relations.add_go_function(go_id)
+
+        updated_ids = {self._function_relations.get_go_function_from_id(go_id).go_id for go_id in extracted_ids}
+        return updated_ids
+
+    def _raw_function_annotations(self, uniprot_id, page=1) -> list:
         """Currently all annotations are downloaded. Potentially it might be better to select a confidence level."""
-        data = json_query(f"https://www.ebi.ac.uk/QuickGO/services/annotation/search?selectedFields=geneProductId&"
-                          f"geneProductId={uniprot_id}&aspect=molecular_function&qualifier=enables&page={page}")
+        base_url = "https://www.ebi.ac.uk/QuickGO/services/annotation/"
+        fixed_query = "search?selectedFields=geneProductId&"
+        variable_query = f"geneProductId={uniprot_id}&aspect=molecular_function&qualifier=enables&page={page}"
 
+        data = json_query(f"{base_url}{fixed_query}{variable_query}")
+
+        # If no data: return Empty list
         if data["numberOfHits"] == 0:
             return []
+
         assert data["pageInfo"]["current"] == page
-        if data["pageInfo"]["total"] == 1:
-            return data['results']
+        results = data['results']
+        # If not last page: get results of lower page(s) and add them to current results
+        if page < data["pageInfo"]["total"]:
+            lower_page_results = self._raw_function_annotations(uniprot_id, page + 1)
+            results.extend(lower_page_results)
+        elif page == 1:
+            assert len(results) == data["numberOfHits"]
+        return results
+
+
+class SelectedFunctionAnnotation(AllFunctionAnnotation):
+    def __init__(self, functions: set, alternative_name_dict: Optional[dict] = None, simplify_name=True):
+        super(SelectedFunctionAnnotation, self).__init__(alternative_name_dict=alternative_name_dict,
+                                                         simplify_name=simplify_name)
+        self._functions = functions
+
+    def get_protein_functions(self, uniprot_id, as_dataframe=True) -> Union[List[Dict], pd.DataFrame]:
+        protein_function_list: List[Dict] = super().get_protein_functions(uniprot_id, as_dataframe=False)
+        protein_function_list = [annotation for annotation in protein_function_list
+                                 if annotation["go_id"] in self._functions]
+        if len(protein_function_list) == 0:
+            protein_function_list.append({"uniprot_id": uniprot_id,
+                                          "function": "no_function"})
+        if as_dataframe:
+            return pd.DataFrame(protein_function_list)
         else:
-            if page < data["pageInfo"]["total"]:
-                # If not last page: get content of page and add content of next page, this works recursive.
-                cur_data = data['results']
-                next_data = self._query_go_for_function(uniprot_id, page + 1)
-                cur_data.extend(next_data)
-                if page == 1:
-                    assert len(cur_data) == data["numberOfHits"]
-                return cur_data
-            else:
-                # If last Page return content
-                return data['results']
+            return protein_function_list
 
-    def go_protein_function_annotations(self, uniprot_id):
-        query_result = self._query_go_for_function(uniprot_id)
-        for entry in query_result:
-            assert uniprot_id in entry["geneProductId"], print(uniprot_id, entry)
-            if entry["goAspect"] == "molecular_function":
-                if entry["qualifier"] == "enables":
-                    self._hierarchy.add_go_function(entry["goId"])
-                    yield self._hierarchy.get_go_function_from_id(entry["goId"]).go_id
 
-    def add_protein(self, uniprot_id) -> None:
-        protein = self._create_protein(uniprot_id)
-        self._created_proteins[uniprot_id] = protein
+class SpecialFunctionAnnotation(AllFunctionAnnotation):
+    def __init__(self, function_specifications: List[Tuple[Set, Set, str]]):
+        self._function_specifications = function_specifications
+        super(SpecialFunctionAnnotation, self).__init__()
 
-    def get_go_function(self, go_id) -> GoMolecularFunction:
-        return self._hierarchy.get_go_function_from_id(go_id)
-
-    def define_protein_class(self,
-                             name: str,
-                             present_functions: Set[str],
-                             not_present_functions: Set[str],
-                             check_definition_clash: bool = True):
-        """Adds a protein_class for classification.
-
-        TODO: Add explanation
-
-        Args:
-            check_definition_clash (bool):
-            name:
-            present_functions (set): All GO IDs which must be present
-            not_present_functions (set): All GO IDs which must not be matched
-
-        Returns:
-            None
-        """
-        for go_id in present_functions.union(not_present_functions):
-            self._hierarchy.add_go_function(go_id)
-        self._updated = False
-
-        if check_definition_clash:
-            new_definion_covered_go_terms = set()
-            for go_id in present_functions:
-                new_definion_covered_go_terms.update([node.go_id for node in
-                                                      self._hierarchy.get_nodes_downwards(go_id)])
-            # Remove and ignore functions covered by "not_present_functions"
-            for go_id in not_present_functions:
-                new_definion_covered_go_terms.difference_update([node.go_id for node in
-                                                                 self._hierarchy.get_nodes_downwards(go_id)])
-
-            for protein_class, definition in self._managed_classes_dict.items():
-                covered_go_terms = set()
-                for go_id in definition["contains"]:
-                    covered_go_terms.update([node.go_id for node in self._hierarchy.get_nodes_downwards(go_id)])
-                for go_id in definition["contains_not"]:
-                    covered_go_terms.difference_update([node.go_id for node in
-                                                        self._hierarchy.get_nodes_downwards(go_id)])
-                inter_class_go_intersecitons = covered_go_terms.intersection(new_definion_covered_go_terms)
-                if len(inter_class_go_intersecitons) > 0:
-                    raise ValueError(f"{inter_class_go_intersecitons} are already used in {protein_class}!")
-
-        self._managed_classes_dict[name] = {"contains": present_functions,
-                                            "contains_not": not_present_functions}
-
-    def _functions_of_class(self, protein_class):
-        class_functions = set()
-        for go_id in self._managed_classes_dict[protein_class]["contains"]:
-            class_functions.update([node.go_id for node in self._hierarchy.get_nodes_downwards(go_id)])
-        for go_id in self._managed_classes_dict[protein_class]["contains_not"]:
-            class_functions.difference_update([node.go_id for node in self._hierarchy.get_nodes_downwards(go_id)])
-        return class_functions
-
-    def check_classification_overlap(self):
-        function_dict = dict()
-        for p_class in self._managed_classes_dict.keys():
-            function_dict[p_class] = self._functions_of_class(p_class)
-
-        for i, p_class1 in enumerate(self._managed_classes_dict.keys()):
-            p_class1_functions = function_dict[p_class1]
-
-            for j, p_class2 in enumerate(self._managed_classes_dict.keys()):
-                if i >= j:
-                    continue
-                p_class2_functions = function_dict[p_class2]
-                overlap = p_class1_functions.intersection(p_class2_functions)
-                if len(overlap) > 0:
-                    warnings.warn(f"{overlap} occure in {p_class1} and {p_class2}")
-
-    def _is_match(self, uniprot_id, class_name):
-        must_occure = self._managed_classes_dict[class_name]["contains"]
-        must_not_occure = self._managed_classes_dict[class_name]["contains_not"]
-        protein_functions = set(self._created_proteins[uniprot_id].functions)
-        if must_occure.issubset(protein_functions) and len(must_not_occure.intersection(protein_functions)) == 0:
-            return True
+    def get_protein_functions(self, uniprot_id, as_dataframe=True) -> Union[List[Dict], pd.DataFrame]:
+        protein_function_list: List[Dict] = super().get_protein_functions(uniprot_id, as_dataframe=False)
+        protein_go_id_set = {annotation["go_id"] for annotation in protein_function_list}
+        result_dict_list = []
+        for specific_function in self._function_specifications:
+            has_required = specific_function[0].issubset(protein_go_id_set)
+            no_excluded = len(specific_function[1].intersection(protein_go_id_set)) == 0
+            if has_required and no_excluded:
+                result_dict_list.append({"uniprot_id": uniprot_id,
+                                         "functions": specific_function[2]})
+        if len(result_dict_list) == 0:
+            result_dict_list.append({"uniprot_id": uniprot_id,
+                                     "functions": "no_function"})
+        if as_dataframe:
+            return pd.DataFrame(result_dict_list)
         else:
-            return False
-
-    def _classify_protein(self, uniprot_id) -> Set[str]:
-        matching_classes = set()
-        for protein_class in self._managed_classes_dict.keys():
-            if self._is_match(uniprot_id, protein_class):
-                matching_classes.add(protein_class)
-        return matching_classes
-
-    def get_matching_classes(self, uniprot_id) -> Set[str]:
-        if uniprot_id not in self._created_proteins:
-            self.add_protein(uniprot_id)
-        return self._classify_protein(uniprot_id)
-
-    def get_protein_class(self, uniprot_id) -> str:
-        if uniprot_id not in self._created_proteins:
-            self.add_protein(uniprot_id)
-        matching_classes = self._classify_protein(uniprot_id)
-        if len(matching_classes) == 1:
-            return list(matching_classes)[0]
-        else:
-            return "Multiclass_({})".format(", ".join(sorted(matching_classes)))
+            return result_dict_list
