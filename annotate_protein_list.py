@@ -23,6 +23,7 @@ if __name__ == "__main__":
 
     if not args.column:
         raise ValueError("Please specify the name of the column containing the smiles '-c'!")
+
     if not args.separator or args.separator == "tab":
         sep_symbol = "\t"
     else:

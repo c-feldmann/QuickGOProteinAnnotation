@@ -239,26 +239,6 @@ class GOMolecularFunctionHierarchy:
         return r_nodes
 
 
-class Protein:
-    def __init__(self, uniprot_id: str):
-        self._uniprot_id = uniprot_id
-        self._function_id_set = set()
-
-    @property
-    def uniprot_id(self):
-        return self._uniprot_id
-
-    @property
-    def functions(self) -> Set[str]:
-        return self._function_id_set
-
-    @functions.setter
-    def functions(self, function_dict):
-        if not isinstance(function_dict, set):
-            raise TypeError
-        self._function_id_set = function_dict
-
-
 class AllFunctionAnnotation:
     def __init__(self, alternative_name_dict=None, simplify_name=True):
         if alternative_name_dict is None:
@@ -297,10 +277,10 @@ class AllFunctionAnnotation:
                 name = self._function_relations.get_go_function_from_id(go_id).name
             function_dict_list.append({"uniprot_id": uniprot_id,
                                        "go_id": go_id,
-                                       "name": name})
+                                       "protein_function": name})
         if len(function_dict_list) == 0:
             function_dict_list.append({"uniprot_id": uniprot_id,
-                                       "function": "no_function"})
+                                       "protein_function": "no_function"})
         if as_dataframe:
             return pd.DataFrame(function_dict_list)
         else:
@@ -358,7 +338,7 @@ class SelectedFunctionAnnotation(AllFunctionAnnotation):
                                  if annotation["go_id"] in self._functions]
         if len(protein_function_list) == 0:
             protein_function_list.append({"uniprot_id": uniprot_id,
-                                          "function": "no_function"})
+                                          "protein_function": "no_function"})
         if as_dataframe:
             return pd.DataFrame(protein_function_list)
         else:
@@ -379,10 +359,10 @@ class SpecialFunctionAnnotation(AllFunctionAnnotation):
             no_excluded = len(specific_function[1].intersection(protein_go_id_set)) == 0
             if has_required and no_excluded:
                 result_dict_list.append({"uniprot_id": uniprot_id,
-                                         "functions": specific_function[2]})
+                                         "protein_function": specific_function[2]})
         if len(result_dict_list) == 0:
             result_dict_list.append({"uniprot_id": uniprot_id,
-                                     "functions": "no_function"})
+                                     "protein_function": "no_function"})
         if as_dataframe:
             return pd.DataFrame(result_dict_list)
         else:

@@ -1,3 +1,4 @@
 from .function_extraction import AllFunctionAnnotation
 from .function_extraction import SpecialFunctionAnnotation
+from .function_extraction import SelectedFunctionAnnotation
 from .default_use import DefaultAnnotation

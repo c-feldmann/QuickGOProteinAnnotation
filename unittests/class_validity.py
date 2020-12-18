@@ -22,11 +22,11 @@ class TestingGOAnnotations(unittest.TestCase):
 class TestingProteinAnnotation(unittest.TestCase):
     def test_exemplary_proteins(self):
         self.assertEqual({"Kinase", "Transcription regulator"},
-                         set(default_annotation.get_protein_functions("Q16512").functions))
+                         set(default_annotation.get_protein_functions("Q16512").protein_function))
         self.assertEqual({"Kinase"},
-                         set(default_annotation.get_protein_functions("P30085").functions))
+                         set(default_annotation.get_protein_functions("P30085").protein_function))
         self.assertEqual({"Peptidase"},
-                         set(default_annotation.get_protein_functions("P25774").functions))
+                         set(default_annotation.get_protein_functions("P25774").protein_function))
 
 
 if __name__ == '__main__':
