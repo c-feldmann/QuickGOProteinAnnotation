@@ -7,6 +7,11 @@ import networkx as nx
 import requests
 
 
+class RemovedGOTerm(Exception):
+    """Error raised when a term is removed without replacement"""
+    pass
+
+
 def json_query(url):
     """Loads data from URL and returns them in json format."""
     r = requests.get(url, headers={"Accept": "application/json"})
@@ -74,7 +79,7 @@ class GOTerm:
             raise
 
         if data['isObsolete'] is True:
-            raise AssertionError(f'{go_id} is obsolete!')
+            raise RemovedGOTerm(f'{go_id} is obsolete!')
 
         data_go_id = data['id']
         if data_go_id != go_id:
@@ -133,6 +138,7 @@ class GOMolecularFunctionHierarchy:
     """
 
     def __init__(self):
+        self._removed_function_set = set()
         self._rerouted_function_dict: Dict[str, str] = dict()
         self._function_dict: Dict[str, GoMolecularFunction] = dict()
         self._graph = nx.DiGraph()
@@ -140,11 +146,15 @@ class GOMolecularFunctionHierarchy:
     @property
     def managed_function_ids(self) -> Set[str]:
         assert not set(self._rerouted_function_dict.keys()).intersection(self._function_dict.keys())
-        return set(self._rerouted_function_dict.keys()).union(self._function_dict.keys())
+        return set(self._rerouted_function_dict.keys()).union(self._function_dict.keys()) | self._removed_function_set
 
     @property
     def graph(self):
         return self._graph
+
+    @property
+    def removed_function_set(self):
+        return self._removed_function_set
 
     def get_parent(self, go_id) -> List[GoMolecularFunction]:
         return [self._function_dict[node] for node in self.graph.neighbors(go_id)]
@@ -191,17 +201,24 @@ class GOMolecularFunctionHierarchy:
 
     def _add_go_function_without_path(self, go_id):
         if go_id not in self.managed_function_ids:
-            go_function = GoMolecularFunction.from_id(go_id)
-            if go_id != go_function.go_id:
-                self._rerouted_function_dict[go_id] = go_function.go_id
-            if go_function.go_id not in self._function_dict:
-                self._function_dict[go_function.go_id] = go_function
+            try:
+                go_function = GoMolecularFunction.from_id(go_id)
+                if go_id != go_function.go_id:
+                    self._rerouted_function_dict[go_id] = go_function.go_id
+                if go_function.go_id not in self._function_dict:
+                    self._function_dict[go_function.go_id] = go_function
+            except RemovedGOTerm:
+                self._removed_function_set.add(go_id)
+                raise
 
     def add_go_function(self, go_id: str) -> None:
         if go_id not in self.managed_function_ids:
-            self._add_go_function_without_path(go_id)
-            updated_id = self.get_go_function_from_id(go_id).go_id
-            self._add_path_to_top_level(updated_id)
+            try:
+                self._add_go_function_without_path(go_id)
+                updated_id = self.get_go_function_from_id(go_id).go_id
+                self._add_path_to_top_level(updated_id)
+            except RemovedGOTerm:
+                pass
 
     def get_go_function_from_id(self, go_id) -> GoMolecularFunction:
         if go_id in self._rerouted_function_dict:
@@ -265,7 +282,8 @@ class AllFunctionAnnotation:
             implicit_go_ids = {go_function.go_id for go_function in implicit_go_functions}
             all_ids.update(implicit_go_ids)
         # Remove "molecular_function" annotation
-        all_ids.remove("GO:0003674")
+        if "GO:0003674" in all_ids:
+            all_ids.remove("GO:0003674")
         function_dict_list = []
         for go_id in all_ids:
             if go_id in self._alternative_name_dict:
@@ -280,6 +298,7 @@ class AllFunctionAnnotation:
                                        "protein_function": name})
         if len(function_dict_list) == 0:
             function_dict_list.append({"uniprot_id": uniprot_id,
+                                       "go_id": None,
                                        "protein_function": "no_function"})
         if as_dataframe:
             return pd.DataFrame(function_dict_list)
@@ -299,7 +318,7 @@ class AllFunctionAnnotation:
         # Add go ids and find potential ID updated
         for go_id in extracted_ids:
             self._function_relations.add_go_function(go_id)
-
+        extracted_ids = [go_id for go_id in extracted_ids if go_id not in self._function_relations.removed_function_set]
         updated_ids = {self._function_relations.get_go_function_from_id(go_id).go_id for go_id in extracted_ids}
         return updated_ids
 
