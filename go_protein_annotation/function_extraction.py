@@ -290,7 +290,8 @@ class AllFunctionAnnotation:
                 name = self._alternative_name_dict[go_id]
             elif self._simplify_name:
                 name = self._function_relations.get_go_function_from_id(go_id).name
-                name = name.rstrip(" activity")
+                if name[-9:] == " activity":
+                    name = name[:-9]
             else:
                 name = self._function_relations.get_go_function_from_id(go_id).name
             function_dict_list.append({"uniprot_id": uniprot_id,
