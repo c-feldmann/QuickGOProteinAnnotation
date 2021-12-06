@@ -8,5 +8,5 @@ setup(
     packages=['go_protein_annotation', ],
     author_email='cfeldmann@bit.uni-bonn.de',
     description='Classes and functions useful for chemoinformatics',
-    install_requires=['pandas', 'networkx', 'requests']
+    install_requires=['pandas', 'networkx', 'requests', 'tqdm']
 )

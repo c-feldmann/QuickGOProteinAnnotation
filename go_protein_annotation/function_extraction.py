@@ -1,10 +1,10 @@
 import json
-import warnings
-from typing import *
-import pandas as pd
-
 import networkx as nx
+import pandas as pd
 import requests
+from tqdm.auto import tqdm
+from typing import *
+import warnings
 
 
 class RemovedGOTerm(Exception):
@@ -266,7 +266,7 @@ class AllFunctionAnnotation:
 
     def annotate_proteins(self, protein_list, as_dataframe=True) -> Union[List[Dict], pd.DataFrame]:
         result_df = []
-        for uniprot_id in protein_list:
+        for uniprot_id in tqdm(protein_list):
             result_df.extend(self.get_protein_functions(uniprot_id, as_dataframe=False))
         if as_dataframe:
             return pd.DataFrame(result_df)
