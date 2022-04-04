@@ -51,6 +51,8 @@ default_functions = [({"GO:0030234"}, set(), "Enzyme regulator"),
                       {"GO:0016746", "GO:0016765", "GO:0016757", "GO:0016741", "GO:0016772"},
                       "Transferase (other)"),
                      ({"GO:0005215"}, set(), "Transporter"),
+
+                     ({"GO:0003677"}, set(), "DNA binding"),
                      ]
 
 
